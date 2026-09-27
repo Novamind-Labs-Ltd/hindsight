@@ -149,14 +149,14 @@ def _detect_text_search_extension() -> str:
         return "pg_search"
     elif text_search_extension == "native":
         return "native"
-    elif text_search_extension == "pgroonga":
+    elif text_search_extension in ("pgroonga", "pg_bigm"):
         # Treat as native here; ensure_text_search_extension() converts the
         # reflections table to pgroonga structures at runtime.
         return "native"
     else:
         raise ValueError(
             f"Invalid HINDSIGHT_API_TEXT_SEARCH_EXTENSION: {text_search_extension}. "
-            "Must be 'native', 'vchord', 'pg_textsearch', 'pgroonga', or 'pg_search'"
+            "Must be 'native', 'vchord', 'pg_textsearch', 'pgroonga', 'pg_search', or 'pg_bigm'"
         )
 
 

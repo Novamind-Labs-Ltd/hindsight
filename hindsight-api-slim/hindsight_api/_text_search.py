@@ -21,3 +21,18 @@ def mental_models_text_document(alias: str | None = None) -> str:
     """
     prefix = f"{alias}." if alias else ""
     return f"(COALESCE({prefix}name, '') || ' ' || {prefix}content)"
+
+
+def memory_units_text_document() -> str:
+    """The ``memory_units`` full-text document for backends that index base columns."""
+    return "(COALESCE(text, '') || ' ' || COALESCE(context, '') || ' ' || COALESCE(text_signals, ''))"
+
+
+def pg_bigm_document(document: str) -> str:
+    """The expression a ``gin_bigm_ops`` index covers: the document lowercased.
+
+    pg_bigm's ``LIKE`` is case-sensitive and it has no ``ILIKE`` index support,
+    so the index and every query fold case on both sides (``lower`` leaves CJK
+    untouched).
+    """
+    return f"lower({document})"

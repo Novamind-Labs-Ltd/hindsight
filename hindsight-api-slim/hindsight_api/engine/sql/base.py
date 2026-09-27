@@ -440,7 +440,7 @@ class SQLDialect(ABC):
             arm_index: Index of this arm in the UNION ALL (used by Oracle for
                        unique SCORE labels).
             text_search_extension: Full-text search backend ("native", "vchord",
-                                   "pg_textsearch", "pgroonga", "pg_search"). Only relevant for PostgreSQL.
+                                   "pg_textsearch", "pgroonga", "pg_search", "pg_bigm"). Only relevant for PostgreSQL.
             bm25_language: PostgreSQL text search dictionary used by the native
                            backend (e.g. "english", "french"). Ignored by other backends.
             bm25_min_score: Inclusive minimum BM25 relevance score a row must

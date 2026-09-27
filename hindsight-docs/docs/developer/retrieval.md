@@ -72,6 +72,7 @@ No single search method handles all these well. Hindsight solves this with **TEM
 | `vchord` | `vchord_bm25` extension | No |
 | `pg_textsearch` | Timescale `pg_textsearch` extension | No |
 | `pgroonga` | PGroonga (Groonga) full-text extension, `TokenBigram` polyglot tokenizer | No |
+| `pg_bigm` | `pg_bigm` extension, `gin_bigm_ops` index; CJK queries expanded to bigrams, ranked by matched-term count | Untested |
 | `pg_search` | ParadeDB `pg_search` extension, configurable tokenizer (e.g. `jieba`, `chinese_compatible`, `ngram`) via `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER` | Yes |
 
 If you need true BM25 ranking on a horizontally scaled Postgres (Citus) cluster,

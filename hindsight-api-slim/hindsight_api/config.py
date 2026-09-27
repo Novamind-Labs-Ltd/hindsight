@@ -1444,13 +1444,14 @@ DEFAULT_ANN_MAX_SCAN_TUPLES = 4000
 # tests can enumerate the family rather than hardcoding a copy that drifts — a
 # backend added here but forgotten in one of the arm builders is exactly how
 # `min_scores.keyword` became a no-op on four of them (#3882).
-VALID_TEXT_SEARCH_EXTENSIONS = ("native", "vchord", "pg_textsearch", "pgroonga", "pg_search")
+VALID_TEXT_SEARCH_EXTENSIONS = ("native", "vchord", "pg_textsearch", "pgroonga", "pg_search", "pg_bigm")
 DEFAULT_TEXT_SEARCH_EXTENSION = "native"
 
 # PostgreSQL text search dictionary used by the native tsvector backend. Only
 # affects text_search_extension == "native"; other backends use their own
 # tokenizers (vchord: llmlingua2, pg_textsearch: hardcoded english,
-# pgroonga: TokenBigram polyglot, pg_search: per-field Tantivy tokenizer).
+# pgroonga: TokenBigram polyglot, pg_search: per-field Tantivy tokenizer,
+# pg_bigm: character bigrams).
 DEFAULT_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE = "english"
 DEFAULT_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER = ""
 DEFAULT_TEXT_SEARCH_EXTENSION_PG_SEARCH_FUNCTION_SCHEMA = "paradedb"

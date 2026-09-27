@@ -5,9 +5,10 @@ vector distance (pgvector), full-text search (VectorChord BM25 / tsvector),
 and other non-portable patterns.
 """
 
+import re
 from dataclasses import dataclass
 
-from ..._text_search import mental_models_text_document
+from ..._text_search import memory_units_text_document, mental_models_text_document, pg_bigm_document
 from .base import SQLDialect, bm25_score_gate
 
 
@@ -61,6 +62,63 @@ def pg_search_should(fn: str, fields: tuple[str, ...], text_param: str, tokenize
             f") k CROSS JOIN (VALUES {values}) v(f))"
         )
     return "ARRAY[" + ", ".join(f"{fn}.match('{f}', {text_param})" for f in fields) + "]"
+
+
+# Han (incl. extension A and compatibility), kana, and hangul: scripts written
+# without spaces, which pg_bigm_query_terms splits into bigrams.
+_CJK_RUN = re.compile(r"([\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]+)")
+_ID_PUNCT = "-_.:/#"
+
+
+def pg_bigm_query_terms(query_text: str, max_query_terms: int = 0) -> list[str]:
+    """Split a query into the substrings the pg_bigm arm ORs together.
+
+    Tokens are whitespace/punctuation separated and lowercased (the index covers
+    ``lower(document)``); identifier punctuation inside a token (``INC-4471``,
+    ``svc.v2``, ``ERR_TIMEOUT``) is kept so an identifier matches as one
+    substring. A CJK run is written without spaces, so a run longer than two
+    characters becomes its overlapping bigrams — the same expansion pgroonga's
+    ``TokenBigram`` applies — otherwise a question like ``數據庫備份幾點執行``
+    would need to occur verbatim. A single character (a 1-char CJK run or Latin
+    fragment) matches a large share of rows — pg_bigm serves it as a prefix scan
+    over every bigram starting with that character — and in CJK is usually a
+    particle (的, 係, 嘅), so 1-char terms are kept only when the query has nothing
+    longer: a 1-char query still searches, but particles never widen a longer one.
+    Deduplicated in order and capped at ``max_query_terms`` (0 = uncapped).
+    """
+    terms: list[str] = []
+    singles: list[str] = []
+    for token in re.sub(rf"[^\w\s{re.escape(_ID_PUNCT)}]", " ", query_text.lower()).split():
+        for part in _CJK_RUN.split(token):
+            part = part.strip(_ID_PUNCT)
+            if not part:
+                continue
+            if _CJK_RUN.fullmatch(part) and len(part) > 2:
+                terms.extend(part[i : i + 2] for i in range(len(part) - 1))
+            elif len(part) >= 2:
+                terms.append(part)
+            else:
+                singles.append(part)
+    out = list(dict.fromkeys(terms or singles))
+    return out[:max_query_terms] if max_query_terms > 0 else out
+
+
+def pg_bigm_arm_sql(document: str, text_param: str) -> tuple[str, str]:
+    """``(score, match_filter)`` for a pg_bigm arm over ``document`` (the unlowered text).
+
+    ``text_param`` holds :func:`pg_bigm_query_terms` joined by spaces. A row
+    matches if it contains any term (``LIKE ANY``, served by the ``gin_bigm_ops``
+    index, which must cover exactly ``pg_bigm_document(document)``). The score is
+    the number of distinct terms the row contains — a coverage count, not
+    BM25: pg_bigm keeps no term statistics — plus ``bigm_similarity`` in
+    ``[0, 1]`` as a tiebreak that prefers rows whose bigrams overlap the query
+    most relative to their length. Every match scores ``>= 1``.
+    """
+    doc = pg_bigm_document(document)
+    terms = f"unnest(string_to_array({text_param}, ' ')) AS bigm_t(t)"
+    score = f"((SELECT count(*) FROM {terms} WHERE {doc} LIKE likequery(t)) + bigm_similarity({text_param}, {doc}))"
+    match_filter = f"AND {doc} LIKE ANY (ARRAY(SELECT likequery(t) FROM {terms}))"
+    return score, match_filter
 
 
 def knowledge_bm25_arm(
@@ -155,6 +213,10 @@ def knowledge_bm25_arm(
             order_by=f"{score} DESC, {a}.id",
             match_filter=f"AND {document} &@~ {query_expr}",
         )
+
+    if text_search_extension == "pg_bigm":
+        score, match_filter = pg_bigm_arm_sql(mental_models_text_document(a), p)
+        return KnowledgeBm25Arm(order_by=f"{score} DESC, {a}.id", match_filter=match_filter)
 
     # native: generated tsvector over name + content.
     # The generating expression hard-codes the 'english' config (see the
@@ -396,6 +458,9 @@ class PostgreSQLDialect(SQLDialect):
                 f"AND (COALESCE(text, '') || ' ' || COALESCE(context, '') || ' ' || COALESCE(text_signals, '')) "
                 f"&@~ {query_expr}"
             )
+        elif text_search_extension == "pg_bigm":
+            bm25_score_expr, bm25_where_filter = pg_bigm_arm_sql(memory_units_text_document(), text_param)
+            bm25_order_by = f"{bm25_score_expr} DESC"
         elif text_search_extension == "pg_search":
             # ParadeDB pg_search: BM25 index over (id, text, context, text_signals)
             # with key_field='id'. The @@@ operator on the key_field requires a
@@ -458,6 +523,8 @@ class PostgreSQLDialect(SQLDialect):
     ) -> str:
         if text_search_extension in ("vchord", "pg_textsearch", "pg_search", "pgroonga"):
             return query_text
+        if text_search_extension == "pg_bigm":
+            return " ".join(pg_bigm_query_terms(query_text, max_query_terms or 0))
         if max_query_terms is not None and max_query_terms > 0:
             tokens = tokens[:max_query_terms]
         # native tsvector: join tokens with OR operator

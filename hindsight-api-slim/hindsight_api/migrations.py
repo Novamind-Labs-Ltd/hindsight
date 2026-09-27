@@ -39,7 +39,7 @@ from ._pg_extensions import (
     relocate_extension_to_public,
 )
 from ._pg_search import normalize_pg_search_tokenizer, pg_search_bm25_columns
-from ._text_search import mental_models_text_document
+from ._text_search import memory_units_text_document, mental_models_text_document, pg_bigm_document
 from ._vector_index import (
     bootstrap_extension,
     configured_vector_extension,
@@ -946,19 +946,20 @@ def _reconcile_needs_no_backfill(
     needs values only the write path can produce, so it stays fail-closed.
     """
     return (
-        text_search_extension == "pgroonga"
+        text_search_extension in ("pgroonga", "pg_bigm")
         and table_name == "mental_models"
         and current_column_type == "tsvector"
         and current_index_type in {None, "gin"}
     )
 
 
-def _ensure_pgroonga_extension(conn: Connection) -> None:
+def _ensure_pgroonga_extension(conn: Connection, name: str = "pgroonga") -> None:
+    """Create a base-column text-search extension (``pgroonga`` or ``pg_bigm``) if missing."""
     try:
-        create_extension(conn, "pgroonga", cascade=True)
+        create_extension(conn, name, cascade=True)
     except Exception:
         # Extension might already exist or user lacks permissions — verify
-        has_ext = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'pgroonga'")).fetchone()
+        has_ext = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = :name"), {"name": name}).fetchone()
         if not has_ext:
             raise
 
@@ -1020,6 +1021,21 @@ def _create_text_search_index(
                 WITH (tokenizer='TokenBigram', normalizer='NormalizerNFKC150')
             """)
         )
+    elif text_search_extension == "pg_bigm":
+        # Character-bigram GIN index over the lowercased document; build_bm25_arm /
+        # knowledge_bm25_arm repeat this expression verbatim so LIKE can use it.
+        if table_name == "memory_units":
+            index_expr = pg_bigm_document(memory_units_text_document())
+        else:  # mental_models
+            index_expr = pg_bigm_document(mental_models_text_document())
+        logger.info(f"Creating pg_bigm index on {table_name}")
+        conn.execute(
+            text(f"""
+                CREATE INDEX IF NOT EXISTS {index_name}
+                ON {schema_name}.{table_name}
+                USING gin ({index_expr} gin_bigm_ops)
+            """)
+        )
     elif text_search_extension == "pg_search":
         # ParadeDB BM25 index over the table's primary key and text columns.
         # Column list mirrors what the initial / text_signals migrations create.
@@ -1069,7 +1085,7 @@ def ensure_text_search_extension(
     Args:
         database_url: SQLAlchemy database URL
         text_search_extension: Configured text search extension — one of
-            "native", "vchord", "pg_textsearch", "pgroonga", or "pg_search"
+            "native", "vchord", "pg_textsearch", "pgroonga", "pg_search", or "pg_bigm"
         schema: Target PostgreSQL schema name (None for public)
         pg_search_tokenizer: Optional ParadeDB tokenizer to apply to pg_search
             BM25 text fields when indexes are created. Empty keeps the
@@ -1108,6 +1124,11 @@ def ensure_text_search_extension(
             # and so the column-type mismatch detection above keeps working.
             target_column_type = "text"
             target_index_type = "pgroonga"
+        elif text_search_extension == "pg_bigm":
+            # Dummy TEXT column like pgroonga; the gin_bigm_ops index covers the
+            # base columns. text+gin is unambiguous: native's gin sits on tsvector.
+            target_column_type = "text"
+            target_index_type = "gin"
         elif text_search_extension == "pg_search":
             # ParadeDB: same column type / access method as pg_textsearch.
             # Disambiguated below by inspecting the index reloptions (key_field).
@@ -1226,8 +1247,8 @@ def ensure_text_search_extension(
             else:
                 logger.debug(f"Text search OK for {table_name}: {current_column_type}/{current_index_type}")
 
-        if missing_index_tables and text_search_extension == "pgroonga":
-            _ensure_pgroonga_extension(conn)
+        if missing_index_tables and text_search_extension in ("pgroonga", "pg_bigm"):
+            _ensure_pgroonga_extension(conn, text_search_extension)
         for table_name in missing_index_tables:
             _create_text_search_index(conn, schema_name, table_name, text_search_extension, pg_search_tokenizer)
         if missing_index_tables:
@@ -1253,6 +1274,8 @@ def ensure_text_search_extension(
                 current_ext = "vchord"
             elif current_col_type == "text" and current_idx_type == "pgroonga":
                 current_ext = "pgroonga"
+            elif current_col_type == "text" and current_idx_type == "gin":
+                current_ext = "pg_bigm"
             elif current_col_type == "text":
                 current_ext = "pg_search" if first_is_pg_search else "pg_textsearch"
             else:
@@ -1306,9 +1329,9 @@ def ensure_text_search_extension(
                 conn.execute(
                     text(f"ALTER TABLE {schema_name}.{table_name} ADD COLUMN IF NOT EXISTS search_vector TEXT")
                 )
-            elif text_search_extension == "pgroonga":
-                _ensure_pgroonga_extension(conn)
-                logger.info(f"Creating dummy TEXT search_vector on {table_name} for pgroonga")
+            elif text_search_extension in ("pgroonga", "pg_bigm"):
+                _ensure_pgroonga_extension(conn, text_search_extension)
+                logger.info(f"Creating dummy TEXT search_vector on {table_name} for {text_search_extension}")
                 # pgroonga indexes the base text columns directly, but we keep a
                 # dummy search_vector column for symmetry with pg_textsearch and
                 # so the column-type mismatch detection above keeps working.

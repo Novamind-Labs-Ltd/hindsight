@@ -239,7 +239,7 @@ If you need to switch from one extension to another:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_TEXT_SEARCH_EXTENSION` | Text search backend: `native`, `vchord`, `pg_textsearch`, `pgroonga`, or `pg_search` | `native` |
+| `HINDSIGHT_API_TEXT_SEARCH_EXTENSION` | Text search backend: `native`, `vchord`, `pg_textsearch`, `pgroonga`, `pg_search`, or `pg_bigm` | `native` |
 | `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE` | PostgreSQL text search dictionary used by the `native` backend (e.g. `english`, `french`, `simple`, `zhparser`) | `english` |
 | `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER` | ParadeDB `pg_search` tokenizer used when creating BM25 indexes. Empty uses ParadeDB's default tokenizer (`unicode_words`). | unset |
 | `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_FUNCTION_SCHEMA` | Schema containing ParadeDB `pg_search` functions (`score`, `boolean`, `match`). Default is `paradedb`; set to `pgsearch` (or another valid identifier) on managed PostgreSQL distributions that install functions under a custom schema. | `paradedb` |
@@ -247,12 +247,13 @@ If you need to switch from one extension to another:
 | `HINDSIGHT_API_BM25_SELECTIVE_TERMS` | When the cap above trims a query, whether to keep the most **selective** terms (lowest document frequency, from `pg_stats`) rather than the first N. `true` is strictly better for recall at no extra cost when stats exist; set `false` to opt out of the catalog read and cap by position. Ignored when the cap is `0`. | `true` |
 | `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE` | When set, forces every LLM-generated artifact (retain facts, consolidation observations, reflect responses) into this language. Free-form (e.g. `Spanish`, `Japanese`). | unset |
 
-Hindsight supports five backends for BM25 keyword retrieval:
+Hindsight supports six backends for BM25 keyword retrieval:
 - **native** — PostgreSQL's built-in full-text search (`tsvector` + GIN). Language configurable.
 - **vchord** — VectorChord BM25 (uses the `llmlingua2` multilingual tokenizer).
 - **pg_textsearch** — Timescale's pg_textsearch extension. English-only.
 - **pgroonga** — pgroonga full-text search. Multilingual / CJK out of the box.
 - **pg_search** — ParadeDB pg_search. True BM25; the only backend that is Citus-compatible.
+- **pg_bigm** — pg_bigm character-bigram `LIKE` search, available on managed Postgres (AWS RDS/Aurora, Alibaba RDS) that lacks pgroonga. Script-agnostic; ranks by matched-term count, not BM25.
 
 A bank can also use none of them: [`enable_text_search`](#recall-pipeline-stages)
 switches the keyword arm off per bank, leaving pure vector search. Every setting in

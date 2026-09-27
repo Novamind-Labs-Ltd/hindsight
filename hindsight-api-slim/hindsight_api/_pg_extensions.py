@@ -45,6 +45,7 @@ MANAGED_EXTENSIONS: tuple[str, ...] = (
     "pg_textsearch",
     "pg_search",
     "pgroonga",
+    "pg_bigm",
 )
 
 
